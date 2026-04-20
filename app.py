@@ -6,6 +6,15 @@ from collections import Counter
 from PIL import Image
 
 # =========================
+# CONFIG PAGE
+# =========================
+st.set_page_config(
+    page_title="Deteksi Uang Rupiah",
+    page_icon="💰",
+    layout="wide"
+)
+
+# =========================
 # LOAD MODEL
 # =========================
 @st.cache_resource
@@ -28,14 +37,28 @@ nominal_map = {
 }
 
 # =========================
-# UI
+# SIDEBAR
 # =========================
-st.title("💰 Sistem Deteksi & Perhitungan Uang Rupiah")
+st.sidebar.title("⚙️ Pengaturan")
 
-mode = st.radio("Pilih Metode Input:", ["Upload Gambar", "Kamera"])
+CONF_THRESHOLD = st.sidebar.slider(
+    "Confidence Threshold",
+    0.1, 1.0, 0.5, 0.05
+)
+
+mode = st.sidebar.radio(
+    "Metode Input",
+    ["Upload Gambar", "Kamera"]
+)
 
 # =========================
-# PROCESS IMAGE (NO THRESHOLD)
+# TITLE
+# =========================
+st.title("💰 Deteksi & Perhitungan Uang Rupiah")
+st.caption("Menggunakan YOLOv8")
+
+# =========================
+# PROCESS IMAGE
 # =========================
 def process_image(image):
     results = model(image)
@@ -48,14 +71,24 @@ def process_image(image):
     total = 0
     counter = Counter()
     details = []
+    debug_data = []
 
     if boxes is not None:
         for box in boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
 
-            # TANPA FILTER → semua dihitung
+            # ✅ FILTER CONFIDENCE
+            if conf < CONF_THRESHOLD:
+                continue
+
             counter[cls] += 1
+
+            debug_data.append({
+                "class_id": cls,
+                "nominal": nominal_map.get(cls, 0),
+                "confidence": round(conf, 3)
+            })
 
     # hitung total
     for kelas in sorted(counter.keys()):
@@ -64,45 +97,52 @@ def process_image(image):
         subtotal = nominal * jumlah
         total += subtotal
 
-        details.append(f"Rp {nominal:,} → {jumlah} lembar = Rp {subtotal:,}")
+        details.append({
+            "nominal": nominal,
+            "jumlah": jumlah,
+            "subtotal": subtotal
+        })
 
-    return img, details, total, counter
+    return img, details, total, counter, debug_data
 
 # =========================
 # DISPLAY RESULT
 # =========================
 def show_result(image_np):
-    result_img, details, total, counter = process_image(image_np)
+    col1, col2 = st.columns([2, 1])
 
-    st.image(result_img, caption="Hasil Deteksi", use_column_width=True)
+    result_img, details, total, counter, debug_data = process_image(image_np)
 
-    st.subheader("📊 Ringkasan")
+    with col1:
+        st.image(result_img, caption="Hasil Deteksi", use_column_width=True)
 
-    if len(counter) == 0:
-        st.warning("Tidak ada uang terdeteksi")
-        return
+    with col2:
+        st.subheader("📊 Ringkasan")
 
-    for d in details:
-        st.write(d)
+        if len(counter) == 0:
+            st.warning("Tidak ada uang terdeteksi")
+            return
 
-    st.success(f"💰 TOTAL UANG: Rp {total:,.0f}")
+        for d in details:
+            st.write(
+                f"💵 Rp {d['nominal']:,} × {d['jumlah']} = Rp {d['subtotal']:,}"
+            )
 
-    # DEBUG
+        st.divider()
+        st.success(f"💰 TOTAL: Rp {total:,.0f}")
+
+    # DEBUG SECTION
     with st.expander("🔍 Debug Info"):
-        debug_list = []
-        results = model(image_np)
-        for box in results[0].boxes:
-            debug_list.append({
-                "class_id": int(box.cls[0]),
-                "confidence": float(box.conf[0])
-            })
-        st.write(debug_list)
+        st.write(debug_data)
 
 # =========================
 # INPUT
 # =========================
 if mode == "Upload Gambar":
-    uploaded_file = st.file_uploader("Upload gambar uang", type=["jpg", "png", "jpeg"])
+    uploaded_file = st.file_uploader(
+        "Upload gambar uang",
+        type=["jpg", "png", "jpeg"]
+    )
 
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
