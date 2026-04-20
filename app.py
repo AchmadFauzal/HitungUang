@@ -46,6 +46,11 @@ CONF_THRESHOLD = st.sidebar.slider(
     0.1, 1.0, 0.5, 0.05
 )
 
+IOU_THRESHOLD = st.sidebar.slider(
+    "IoU Threshold (Overlap Filter)",
+    0.1, 1.0, 0.5, 0.05
+)
+
 mode = st.sidebar.radio(
     "Metode Input",
     ["Upload Gambar", "Kamera"]
@@ -55,13 +60,15 @@ mode = st.sidebar.radio(
 # TITLE
 # =========================
 st.title("💰 Deteksi & Perhitungan Uang Rupiah")
-st.caption("Menggunakan YOLOv8")
+st.caption("Menggunakan YOLOv8 + Streamlit")
 
 # =========================
 # PROCESS IMAGE
 # =========================
 def process_image(image):
-    results = model(image)
+    # 🔥 CONF & IOU langsung ke model
+    results = model(image, conf=CONF_THRESHOLD, iou=IOU_THRESHOLD)
+
     boxes = results[0].boxes
 
     # gambar hasil deteksi
@@ -77,10 +84,6 @@ def process_image(image):
         for box in boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
-
-            # ✅ FILTER CONFIDENCE
-            if conf < CONF_THRESHOLD:
-                continue
 
             counter[cls] += 1
 
@@ -113,9 +116,11 @@ def show_result(image_np):
 
     result_img, details, total, counter, debug_data = process_image(image_np)
 
+    # LEFT: IMAGE
     with col1:
         st.image(result_img, caption="Hasil Deteksi", use_column_width=True)
 
+    # RIGHT: RESULT
     with col2:
         st.subheader("📊 Ringkasan")
 
@@ -131,7 +136,7 @@ def show_result(image_np):
         st.divider()
         st.success(f"💰 TOTAL: Rp {total:,.0f}")
 
-    # DEBUG SECTION
+    # DEBUG
     with st.expander("🔍 Debug Info"):
         st.write(debug_data)
 
