@@ -6,10 +6,10 @@ from collections import Counter
 from PIL import Image
 
 # =========================
-# CONFIG PAGE
+# CONFIG
 # =========================
 st.set_page_config(
-    page_title="Deteksi Uang Rupiah",
+    page_title="Rupiah Vision AI",
     page_icon="💰",
     layout="wide"
 )
@@ -24,7 +24,7 @@ def load_model():
 model = load_model()
 
 # =========================
-# MAPPING NOMINAL
+# MAPPING (PASTIKAN SESUAI TRAINING!)
 # =========================
 nominal_map = {
     0: 1000,
@@ -39,64 +39,47 @@ nominal_map = {
 # =========================
 # SIDEBAR
 # =========================
-st.sidebar.title("⚙️ Pengaturan")
-
-CONF_THRESHOLD = st.sidebar.slider(
-    "Confidence Threshold",
-    0.1, 1.0, 0.5, 0.05
-)
-
-IOU_THRESHOLD = st.sidebar.slider(
-    "IoU Threshold (Overlap Filter)",
-    0.1, 1.0, 0.5, 0.05
-)
-
-mode = st.sidebar.radio(
-    "Metode Input",
-    ["Upload Gambar", "Kamera"]
-)
+with st.sidebar:
+    st.title("⚙️ Pengaturan")
+    mode = st.radio("Input:", ["Upload", "Kamera"])
+    conf_threshold = st.slider("Confidence", 0.0, 1.0, 0.4)
 
 # =========================
-# TITLE
-# =========================
-st.title("💰 Deteksi & Perhitungan Uang Rupiah")
-st.caption("Menggunakan YOLOv8 + Streamlit")
-
-# =========================
-# PROCESS IMAGE
+# PROCESS IMAGE (SMOOTH)
 # =========================
 def process_image(image):
-    # 🔥 CONF & IOU langsung ke model
-    results = model(image, conf=CONF_THRESHOLD, iou=IOU_THRESHOLD)
-
+    results = model(image)  # ❗ TANPA CONF
     boxes = results[0].boxes
 
-    # gambar hasil deteksi
-    img = results[0].plot()
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = image.copy()
 
     total = 0
     counter = Counter()
     details = []
-    debug_data = []
 
     if boxes is not None:
         for box in boxes:
             cls = int(box.cls[0])
             conf = float(box.conf[0])
 
+            # 🔥 FILTER MANUAL (SMOOTH)
+            if conf < conf_threshold:
+                continue
+
             counter[cls] += 1
 
-            debug_data.append({
-                "class_id": cls,
-                "nominal": nominal_map.get(cls, 0),
-                "confidence": round(conf, 3)
-            })
+            # DRAW BOX MANUAL
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            label = f"{nominal_map[cls]} ({conf:.2f})"
+
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0,255,0), 2)
+            cv2.putText(img, label, (x1, y1-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
 
     # hitung total
-    for kelas in sorted(counter.keys()):
-        nominal = nominal_map.get(kelas, 0)
-        jumlah = counter[kelas]
+    for k in sorted(counter.keys()):
+        nominal = nominal_map[k]
+        jumlah = counter[k]
         subtotal = nominal * jumlah
         total += subtotal
 
@@ -106,58 +89,45 @@ def process_image(image):
             "subtotal": subtotal
         })
 
-    return img, details, total, counter, debug_data
+    return img, details, total
 
 # =========================
-# DISPLAY RESULT
+# UI
 # =========================
-def show_result(image_np):
-    col1, col2 = st.columns([2, 1])
+st.title("💰 Rupiah Vision AI")
+st.caption("Deteksi & Hitung Uang Otomatis")
 
-    result_img, details, total, counter, debug_data = process_image(image_np)
+source = None
 
-    # LEFT: IMAGE
-    with col1:
-        st.image(result_img, caption="Hasil Deteksi", use_column_width=True)
-
-    # RIGHT: RESULT
-    with col2:
-        st.subheader("📊 Ringkasan")
-
-        if len(counter) == 0:
-            st.warning("Tidak ada uang terdeteksi")
-            return
-
-        for d in details:
-            st.write(
-                f"💵 Rp {d['nominal']:,} × {d['jumlah']} = Rp {d['subtotal']:,}"
-            )
-
-        st.divider()
-        st.success(f"💰 TOTAL: Rp {total:,.0f}")
-
-    # DEBUG
-    with st.expander("🔍 Debug Info"):
-        st.write(debug_data)
-
-# =========================
-# INPUT
-# =========================
-if mode == "Upload Gambar":
-    uploaded_file = st.file_uploader(
-        "Upload gambar uang",
-        type=["jpg", "png", "jpeg"]
-    )
-
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        image_np = np.array(image)
-        show_result(image_np)
+if mode == "Upload":
+    file = st.file_uploader("Upload gambar", type=["jpg","png","jpeg"])
+    if file:
+        source = Image.open(file)
 
 else:
-    camera_image = st.camera_input("Ambil foto")
+    cam = st.camera_input("Ambil foto")
+    if cam:
+        source = Image.open(cam)
 
-    if camera_image is not None:
-        image = Image.open(camera_image)
-        image_np = np.array(image)
-        show_result(image_np)
+# =========================
+# RESULT
+# =========================
+if source is not None:
+    col1, col2 = st.columns([3,2])
+
+    img_np = np.array(source)
+
+    with st.spinner("Processing..."):
+        result_img, details, total = process_image(img_np)
+
+    with col1:
+        st.image(result_img, use_column_width=True)
+
+    with col2:
+        st.metric("💰 Total", f"Rp {total:,.0f}")
+
+        if details:
+            for d in details:
+                st.write(f"Rp {d['nominal']:,} × {d['jumlah']} = Rp {d['subtotal']:,}")
+        else:
+            st.warning("Tidak ada deteksi")
