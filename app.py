@@ -5,129 +5,132 @@ import numpy as np
 from collections import Counter
 from PIL import Image
 
-# =========================
-# CONFIG
-# =========================
+# Konfigurasi Halaman
 st.set_page_config(
     page_title="Rupiah Vision AI",
     page_icon="💰",
     layout="wide"
 )
 
-# =========================
-# LOAD MODEL
-# =========================
+# Custom CSS untuk mempercantik tampilan
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f7f9;
+    }
+    .stMetric {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        text-align: center;
+        color: gray;
+        padding: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Load model (Caching agar tidak reload setiap kali script dijalankan)
 @st.cache_resource
-def load_model():
+def load_yolo_model():
     return YOLO("best_model.pt")
 
-model = load_model()
+model = load_yolo_model()
 
-# =========================
-# MAPPING (PASTIKAN SESUAI TRAINING!)
-# =========================
 nominal_map = {
-    0: 1000,
-    1: 2000,
-    2: 5000,
-    3: 10000,
-    4: 20000,
-    5: 50000,
-    6: 100000
+    0: 1000, 1: 2000, 2: 5000, 
+    3: 10000, 4: 20000, 5: 50000, 6: 100000
 }
 
-# =========================
-# SIDEBAR
-# =========================
+# --- SIDEBAR ---
 with st.sidebar:
+    st.image("https://www.bi.go.id/id/fungsi-utama/pengedaran-uang/penerbitan-uang/Uang%20Tahun%20Emisi/Uang%20Kertas%20TE%202022.jpg", use_column_width=True)
     st.title("⚙️ Pengaturan")
-    mode = st.radio("Input:", ["Upload", "Kamera"])
-    conf_threshold = st.slider("Confidence", 0.0, 1.0, 0.4)
+    mode = st.radio("Metode Input:", ["📂 Upload Gambar", "📸 Kamera"])
+    st.info("Aplikasi ini mendeteksi nominal uang Rupiah menggunakan teknologi AI (YOLOv8).")
+    
+    conf_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.4)
 
-# =========================
-# PROCESS IMAGE (SMOOTH)
-# =========================
+# --- FUNGSI PROSES ---
 def process_image(image):
-    results = model(image)  # ❗ TANPA CONF
+    # Prediksi dengan threshold yang bisa diatur
+    results = model(image, conf=conf_threshold)
     boxes = results[0].boxes
 
-    img = image.copy()
+    # Plot hasil deteksi
+    img_plotted = results[0].plot(labels=True, conf=True)
+    img_rgb = cv2.cvtColor(img_plotted, cv2.COLOR_BGR2RGB)
+
+    classes = boxes.cls.cpu().numpy().astype(int)
+    counter = Counter(classes)
 
     total = 0
-    counter = Counter()
     details = []
 
-    if boxes is not None:
-        for box in boxes:
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-
-            # 🔥 FILTER MANUAL (SMOOTH)
-            if conf < conf_threshold:
-                continue
-
-            counter[cls] += 1
-
-            # DRAW BOX MANUAL
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            label = f"{nominal_map[cls]} ({conf:.2f})"
-
-            cv2.rectangle(img, (x1, y1), (x2, y2), (0,255,0), 2)
-            cv2.putText(img, label, (x1, y1-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 2)
-
-    # hitung total
-    for k in sorted(counter.keys()):
-        nominal = nominal_map[k]
-        jumlah = counter[k]
+    # Sortir kelas agar output rapi dari nominal terbesar/terkecil
+    for kelas in sorted(counter.keys()):
+        jumlah = counter[kelas]
+        nominal = nominal_map[kelas]
         subtotal = nominal * jumlah
         total += subtotal
-
         details.append({
             "nominal": nominal,
             "jumlah": jumlah,
             "subtotal": subtotal
         })
 
-    return img, details, total
+    return img_rgb, details, total
 
-# =========================
-# UI
-# =========================
+# --- MAIN CONTENT ---
 st.title("💰 Rupiah Vision AI")
-st.caption("Deteksi & Hitung Uang Otomatis")
+st.markdown("### Solusi Cerdas Hitung Uang Rupiah Cepat & Akurat")
+st.divider()
 
-source = None
-
-if mode == "Upload":
-    file = st.file_uploader("Upload gambar", type=["jpg","png","jpeg"])
-    if file:
-        source = Image.open(file)
-
+source_img = None
+if mode == "📂 Upload Gambar":
+    uploaded_file = st.file_uploader("Pilih file gambar...", type=["jpg","png","jpeg"])
+    if uploaded_file:
+        source_img = Image.open(uploaded_file)
 else:
-    cam = st.camera_input("Ambil foto")
-    if cam:
-        source = Image.open(cam)
+    camera_image = st.camera_input("Ambil Foto Uang")
+    if camera_image:
+        source_img = Image.open(camera_image)
 
-# =========================
-# RESULT
-# =========================
-if source is not None:
-    col1, col2 = st.columns([3,2])
-
-    img_np = np.array(source)
-
-    with st.spinner("Processing..."):
-        result_img, details, total = process_image(img_np)
+if source_img is not None:
+    col1, col2 = st.columns([3, 2])
+    
+    image_np = np.array(source_img)
+    with st.spinner('Menganalisis gambar...'):
+        result_img, details, total = process_image(image_np)
 
     with col1:
-        st.image(result_img, use_column_width=True)
+        st.subheader("🖼️ Hasil Deteksi")
+        st.image(result_img, use_column_width=True, caption="Hasil Pemindaian AI")
 
     with col2:
-        st.metric("💰 Total", f"Rp {total:,.0f}")
-
+        st.subheader("📊 Ringkasan")
+        
+        # Tampilan Metric yang Mencolok
+        st.metric(label="Total Nilai Uang", value=f"Rp {total:,.0f}")
+        
         if details:
-            for d in details:
-                st.write(f"Rp {d['nominal']:,} × {d['jumlah']} = Rp {d['subtotal']:,}")
+            st.write("---")
+            for item in details:
+                with st.expander(f"💵 Rp {item['nominal']:,}"):
+                    st.write(f"**Jumlah:** {item['jumlah']} lembar")
+                    st.write(f"**Subtotal:** Rp {item['subtotal']:,}")
         else:
-            st.warning("Tidak ada deteksi")
+            st.warning("Uang tidak terdeteksi. Coba atur ulang threshold atau perbaiki pencahayaan.")
+
+# Footer
+st.markdown("""
+    <div class="footer">
+        Dibuat dengan ❤️ untuk Indonesia
+    </div>
+    """, unsafe_allow_html=True)
